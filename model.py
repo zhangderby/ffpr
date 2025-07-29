@@ -220,7 +220,7 @@ class off_axis_3m_TMA:
 
     def move_optics(self, M1_motion, M2_motion, M3_motion, M4_motion):
 
-        self.raytrace = Lazuli_stop(M1_dict=M1_motion, M2_dict=M2_motion, M3_dict=M3_motion, M4_dict=M4_motion)
+        self.raytrace = Lazuli_stop(M1_dict=M1_motion, M2_dict=M2_motion, M3_dict=M3_motion, M4_dict=M4_motion, motion_loc=1)
         
         self.field_aber = []
         for pos in self.src_pos:
