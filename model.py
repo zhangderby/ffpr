@@ -218,7 +218,7 @@ class off_axis_3m_TMA:
     def add_m1_bending(self, bending_opd):
         self.m1_bending_opd += bending_opd
 
-    def move_optics(self, M1_motion, M2_motion, M3_motion, M4_motion):
+    def move_optics(self, M1_motion=None, M2_motion=None, M3_motion=None, M4_motion=None):
 
         self.raytrace = Lazuli_stop(M1_dict=M1_motion, M2_dict=M2_motion, M3_dict=M3_motion, M4_dict=M4_motion, motion_loc=1)
         
