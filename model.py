@@ -46,10 +46,12 @@ from Batoid4LOFT.LAZULI_STOP import Lazuli_stop, readBulkMotion, readDeformation
 
 from scipy.interpolate import RegularGridInterpolator
 
+from copy import deepcopy
+
 
 class off_axis_3m_TMA:
 
-    def __init__(self, opd_maps, config_stp, config_wcc, data_path_stp, data_path_wcc):
+    def __init__(self, opd_maps, config_stp, config_wcc, data_path_stp, data_path_wcc, use_raytrace=True):
 
         ##### MODEL SETUP #####
         self.cfg_obs = config_stp['observatory']
@@ -101,7 +103,7 @@ class off_axis_3m_TMA:
 
         # use raytrace to include geometric aberrations?
         self.field_aber = []
-        if bool(self.cfg_e2es['simulation']['use_raytrace']) is True:
+        if use_raytrace is True:
             self.raytrace = Lazuli_stop()
             for pos in self.src_pos:
                 ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
@@ -282,9 +284,9 @@ class off_axis_3m_TMA:
 
     def get_opds(self,):
 
-        return {'Optics' : self.opds,
-                'Bending': self.m1_bending_opd,
-                'Field'  : self.field_aber}
+        return {'Optics' : deepcopy(self.opds),
+                'Bending': deepcopy(self.m1_bending_opd),
+                'Field'  : deepcopy(self.field_aber)}
     
 
     def _create_wavefront(self, wvl, src_magnitude, debug=False):
