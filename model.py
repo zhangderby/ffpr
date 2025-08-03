@@ -251,11 +251,12 @@ class off_axis_3m_TMA:
             src_y = pos[1] / 60
             self.src_pos.append((src_x, src_y))
 
-        self.field_aber = []
-        for pos in self.src_pos:
-            ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
-            field_opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
-            self.field_aber.append(field_opd * self.wvl0 * 1e3) # [waves -> um -> nm]      
+        if self.raytrace is not None:
+            self.field_aber = []
+            for pos in self.src_pos:
+                ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
+                field_opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
+                self.field_aber.append(field_opd * self.wvl0 * 1e3) # [waves -> um -> nm]      
 
     def set_cam_exposure_time(self, exposure_time):
         self.exp_time = exposure_time
