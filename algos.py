@@ -81,6 +81,14 @@ class FFPR:
         self.Z8_b = 0
         self.Z8_c = 0
 
+        self.Z9_a = 0
+        self.Z9_b = 0
+        self.Z9_c = 0
+
+        self.Z10_a = 0
+        self.Z10_b = 0
+        self.Z10_c = 0
+
         self.Z11_a = 0
         self.Z11_b = 0
         self.Z11_c = 0
@@ -116,10 +124,10 @@ class FFPR:
         coeffs_field[4] = self.Z8_a * position[0] + self.Z8_b * position[1] + self.Z8_c + coeffs_nom[4]
 
         # Z9 does not deviate from nominal
-        coeffs_field[5] = coeffs_nom[5]
+        coeffs_field[5] = self.Z9_a * position[0] + self.Z9_b * position[1] + self.Z9_c +coeffs_nom[5]
 
         # Z10 does not deviate from nominal
-        coeffs_field[6] = coeffs_nom[6]
+        coeffs_field[6] = self.Z10_a * position[0] + self.Z10_b * position[1] + self.Z10_c + coeffs_nom[6]
 
         # Z11 deviation from nominal varies linearly across the field
         coeffs_field[7] = self.Z11_a * position[0] + self.Z11_b * position[1] + self.Z11_c + coeffs_nom[7]
@@ -129,7 +137,7 @@ class FFPR:
     
     def _rev_calc_coeffs_field(self, position, phasebar):
 
-        xbar_partial = np.zeros(18)
+        xbar_partial = np.zeros(24)
 
         # Z4
         xbar_partial[0] = phasebar[0] * position[0]
@@ -156,10 +164,20 @@ class FFPR:
         xbar_partial[13] = phasebar[4] * position[1]
         xbar_partial[14] = phasebar[4]
 
+        # Z9
+        xbar_partial[15] = phasebar[5] * position[0]
+        xbar_partial[16] = phasebar[5] * position[1]
+        xbar_partial[17] = phasebar[5]
+
+        # Z10
+        xbar_partial[18] = phasebar[6] * position[0]
+        xbar_partial[19] = phasebar[6] * position[1]
+        xbar_partial[20] = phasebar[6]
+
         # Z11
-        xbar_partial[15] = phasebar[7] * position[0]
-        xbar_partial[16] = phasebar[7] * position[1]
-        xbar_partial[17] = phasebar[7]
+        xbar_partial[21] = phasebar[7] * position[0]
+        xbar_partial[22] = phasebar[7] * position[1]
+        xbar_partial[23] = phasebar[7]
 
         return xbar_partial
 
@@ -209,7 +227,7 @@ class FFPR:
         
     def rev_field(self):
 
-        self.xbar = np.zeros(18)
+        self.xbar = np.zeros(24)
 
         for opt, position in zip(self.optlist, self.psf_positions):
 
@@ -277,6 +295,8 @@ class FFPR:
                                                           self.Z6_a, self.Z6_b, self.Z6_c,
                                                           self.Z7_a, self.Z7_b, self.Z7_c,
                                                           self.Z8_a, self.Z8_b, self.Z8_c,
+                                                          self.Z9_a, self.Z9_b, self.Z9_c,
+                                                          self.Z10_a, self.Z10_b, self.Z10_c,
                                                           self.Z11_a, self.Z11_b, self.Z11_c]), jac=jac, method=method, options=options)
 
         return result
