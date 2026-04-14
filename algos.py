@@ -37,7 +37,11 @@ from prysm.polynomials import (
     sum_of_2d_modes_backprop
 )
 
+from prysm.x.optym.cost import bias_and_gain_invariant_error
+
 from scipy.optimize import minimize
+
+import copy
 
 
 def ensure_np(arg):
@@ -45,6 +49,403 @@ def ensure_np(arg):
         return arg
     if hasattr(arg, 'get'):
         return arg.get()
+    
+class mean_squared_error():
+
+    def fwd(I, D):
+
+        return np.sum((I - D) ** 2)
+    
+    def rev(I, D):
+
+        return 2 * (I - D)
+    
+class gain_invariant_error():
+
+    def fwd(I, D):
+        t1 = np.sum(I * D) ** 2
+        t2 = np.sum(D ** 2) 
+        t3 = np.sum(I ** 2)
+        return 1 - t1 / (t2 * t3)
+
+    def rev(I, D):
+        t1 = np.sum(I * D)
+        t2 = np.sum(D ** 2)
+        t3 = np.sum(I ** 2)
+        return 2 * t1 / (t2 * t3 ** 2) * (I * t1 - D * t3)
+    
+class FFPR2():
+
+    def __init__(self, wvls, amp, max_zernike, fields, divs, efl, psfs, pupil_dx, focal_dx, error, jitter_kernel=None):
+        
+        # psf fields
+        self.fields = fields
+
+        # for defining field-linear terms due to misalignments
+        self.field_terms = np.zeros(4)
+
+        # create zernike basis 
+        x, y = make_xy_grid(shape=amp.shape, diameter=2)
+        r_norm, t = cart_to_polar(x, y)
+        nms = [noll_to_nm(i) for i in range(2, max_zernike + 1)]
+        zernikes = list(zernike_nm_seq(nms, r_norm, t, norm=True))
+        zernikes = [z / np.max(np.abs(z)) for z in zernikes]
+        self.coeffs = np.zeros(len(zernikes)) 
+
+        self.costs = []
+
+        # initialize individual PDPR classes for each field
+        self.PDPR_list = [PDPR(wvls=wvls, amp=amp, modes=zernikes, coeffs=np.zeros(len(zernikes)), map=np.zeros_like(amp), divs=divs[f], efl=efl,
+                               psfs=psfs[f], pupil_dx=pupil_dx, focal_dx=focal_dx, error=error, jitter_kernel=jitter_kernel) for f in range(len(fields))]
+        
+    def fg(self, x, opt_param=None, opt_weights=None):
+
+        x = np.array(x)
+
+        # reset f, g
+        self.f = 0
+        self.g = 0
+
+        # reset gradients
+        self.field_terms_bar = np.zeros(4)
+        self.coeffs_bar = 0
+        self.maps_bar = 0
+
+        # if no optimization parameter set, default to coeffs
+        if opt_param is None:
+            opt_param = 'coeffs'
+
+        # set the optimization parameter x
+        # for now, this should be 'coeffs', or 'maps'
+        if opt_param == 'coeffs':
+            self.field_terms = x[:4]
+            self.coeffs = x[4:]
+        elif opt_param == 'map':
+            for PDPR in self.PDPR_list:
+                PDPR.map = x.reshape(PDPR.map.shape)
+
+        # apply weights if provided
+        if opt_weights is not None:
+            x *= opt_weights
+
+        # loop through PDPR classes
+        for PDPR, field in zip(self.PDPR_list, self.fields):
+
+            if opt_param == 'coeffs':
+                coeffs = copy.deepcopy(self.coeffs)
+                coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1] 
+                coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1] 
+                coeffs[4] += -self.field_terms[3] * field[0] + self.field_terms[2] * field[1]
+                PDPR.fg(x=coeffs, opt_param='coeffs', opt_weights=None)
+            elif opt_param == 'map':
+                PDPR.fg(x=x, opt_param='map', opt_weights=None)
+
+            # add model error to f
+            self.f += PDPR.f / len(self.fields)
+
+            # add model OPD gradients to total OPD gradients
+            self.maps_bar += PDPR.map_bar
+
+            # convert model OPD gradient to model coeff gradient then add to total coeff gradients
+            coeffs_bar = PDPR.coeffs_bar
+
+            self.coeffs_bar += coeffs_bar
+
+            # convert total coeff gradients to slope/constant gradients
+            self.field_terms_bar[0] += coeffs_bar[2] * field[0]
+            self.field_terms_bar[1] += coeffs_bar[2] * field[1]
+            self.field_terms_bar[2] += (coeffs_bar[3] * field[0]) + (coeffs_bar[4] * field[1])
+            self.field_terms_bar[3] += (coeffs_bar[3] * field[1]) + (-coeffs_bar[4] * field[0])
+
+        # grab the correct gradients
+        if opt_param == 'coeffs':
+            self.g = np.concatenate((self.field_terms_bar, self.coeffs_bar), axis=0)
+        elif opt_param == 'map':
+            self.g = self.maps_bar.ravel()
+
+        # apply weights if provided
+        if opt_weights is not None:
+            self.g *= opt_weights
+
+        # append f to costs
+        self.costs.append(self.f)
+
+        return self.f.get(), self.g.get()
+    
+    # def __init__(self, wvls, amp, max_zernike, fields, divs, efl, psfs, pupil_dx, focal_dx, error):
+        
+    #     # psf fields
+    #     self.fields = fields
+
+    #     # for defining field-linear terms due to misalignments
+    #     self.field_terms = np.zeros(12)
+
+    #     # create zernike basis 
+    #     x, y = make_xy_grid(shape=amp.shape, diameter=2)
+    #     r_norm, t = cart_to_polar(x, y)
+    #     nms = [noll_to_nm(i) for i in range(2, max_zernike + 1)]
+    #     zernikes = list(zernike_nm_seq(nms, r_norm, t, norm=True))
+    #     zernikes = [z / np.max(np.abs(z)) for z in zernikes]
+    #     self.coeffs = np.zeros(len(zernikes)) 
+
+    #     self.costs = []
+
+    #     # initialize individual PDPR classes for each field
+    #     self.PDPR_list = [PDPR(wvls=wvls, amp=amp, modes=zernikes, coeffs=np.zeros(len(zernikes)), map=np.zeros_like(amp), divs=divs[f], efl=efl,
+    #                            psfs=psfs[f], pupil_dx=pupil_dx, focal_dx=focal_dx, error=error) for f in range(len(fields))]
+        
+    # def fg(self, x, opt_param=None, opt_weights=None):
+
+    #     x = np.array(x)
+
+    #     # reset f, g
+    #     self.f = 0
+    #     self.g = 0
+
+    #     # reset gradients
+    #     self.field_terms_bar = np.zeros(12)
+    #     self.coeffs_bar = 0
+    #     self.maps_bar = 0
+
+    #     # if no optimization parameter set, default to common path coeffs
+    #     if opt_param is None:
+    #         opt_param = 'coeffs'
+
+    #     # set the optimization parameter x
+    #     # for now, this should be 'field', 'coeffs', or 'maps'
+    #     if opt_param == 'field':
+    #         self.field_terms = x
+    #     elif opt_param == 'coeffs':
+    #         self.coeffs = x
+    #     elif opt_param == 'map':
+    #         for PDPR in self.PDPR_list:
+    #             PDPR.map = x.reshape(PDPR.map.shape)
+
+    #     # apply weights if provided
+    #     if opt_weights is not None:
+    #         x *= opt_weights
+
+    #     # loop through PDPR classes
+    #     for PDPR, field in zip(self.PDPR_list, self.fields):
+
+    #         if (opt_param == 'field') or (opt_param == 'coeffs'):
+    #             coeffs = copy.deepcopy(self.coeffs)
+    #             coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1] + self.field_terms[2]
+    #             coeffs[3] += self.field_terms[3] * field[0] + self.field_terms[4] * field[1] + self.field_terms[5]
+    #             coeffs[4] += -self.field_terms[4] * field[0] + self.field_terms[3] * field[1] + self.field_terms[6]
+    #             coeffs[5:10] += self.field_terms[7:]
+    #             PDPR.fg(x=coeffs, opt_param='coeffs', opt_weights=None)
+    #         elif opt_param == 'map':
+    #             PDPR.fg(x=x, opt_param=opt_param, opt_weights=None)
+
+    #         # add model error to f
+    #         self.f += PDPR.f / len(self.fields)
+
+    #         # add model OPD gradients to total OPD gradients
+    #         self.maps_bar += PDPR.map_bar
+
+    #         # convert model OPD gradient to model coeff gradient then add to total coeff gradients
+    #         coeffs_bar = PDPR.coeffs_bar
+
+    #         self.coeffs_bar += coeffs_bar
+
+    #         # convert total coeff gradients to slope/constant gradients
+    #         self.field_terms_bar[0] += coeffs_bar[2] * field[0]
+    #         self.field_terms_bar[1] += coeffs_bar[2] * field[1]
+    #         self.field_terms_bar[2] += coeffs_bar[2]
+    #         self.field_terms_bar[3] += (coeffs_bar[3] * field[0]) + (coeffs_bar[4] * field[1])
+    #         self.field_terms_bar[4] += (coeffs_bar[3] * field[1]) + (-coeffs_bar[4] * field[0])
+    #         self.field_terms_bar[5] += coeffs_bar[3]
+    #         self.field_terms_bar[6] += coeffs_bar[4]
+    #         self.field_terms_bar[7:] += coeffs_bar[5:10]
+
+    #      # grab the correct gradients
+    #     if opt_param == 'field':
+    #         self.g = self.field_terms_bar
+    #     elif opt_param == 'coeffs':
+    #         self.g = self.coeffs_bar
+    #     elif opt_param == 'map':
+    #         self.g = self.maps_bar.ravel()
+
+    #     # apply weights if provided
+    #     if opt_weights is not None:
+    #         self.g *= opt_weights
+
+    #     # append f to costs
+    #     self.costs.append(self.f)
+
+    #     return self.f.get(), self.g.get()
+        
+
+
+class PDPR():
+
+    def __init__(self, wvls, amp, modes, coeffs, map, divs, efl, psfs, pupil_dx, focal_dx, error, jitter_kernel=None):
+
+        # defining OPD using modal basis for low freqs + point map for high freqs
+        self.modes = np.array(modes)
+        self.coeffs = np.array(coeffs)
+        self.map = map
+        self.opd = np.tensordot(self.modes, self.coeffs, axes=(0, 0)) + self.map
+
+        self.costs = []
+
+        # initialize models
+        if type(psfs) == list:
+            self.models = [model(wvls=wvls, amp=amp, opd=self.opd, div=div, efl=efl, psf=psf, pupil_dx=pupil_dx, 
+                                    focal_dx=focal_dx, error=error, jitter_kernel=jitter_kernel) for div, psf in zip(divs, psfs)]
+        else:
+            self.models = [model(wvls=wvls, amp=amp, opd=self.opd, div=divs, efl=efl, psf=psfs, pupil_dx=pupil_dx, 
+                                    focal_dx=focal_dx, error=error, jitter_kernel=jitter_kernel)]
+        
+        
+    def fg(self, x, opt_param=None, opt_weights=None):
+
+        x = np.array(x)
+
+        # reset f, g
+        self.f = 0
+        self.g = 0
+
+        # reset gradients
+        self.map_bar = 0
+        self.coeffs_bar = 0 
+
+        # if no optimization parameter is set, default to coeffs
+        if opt_param is None:
+            opt_param = 'coeffs'
+
+        # set the optimization parameter as x
+        # for now, this should either be 'coeffs' or 'map'
+        if opt_param == 'coeffs':
+            self.coeffs = x
+        elif opt_param == 'map':
+            self.map = x.reshape(self.map.shape)
+
+        # recalculate OPD
+        self.opd = np.tensordot(self.modes, self.coeffs, axes=(0, 0)) + self.map
+
+        # apply weights if provided
+        if opt_weights is not None:
+            x *= opt_weights
+
+        # loop through models
+        for model in self.models:
+            
+            # send OPD to model
+            model.opd = self.opd
+
+            # update the model
+            model.update()
+
+            # add model error to f
+            self.f += model.E / len(self.models)
+
+            # add model OPD gradients to total OPD gradients
+            self.map_bar += model.opd_bar
+
+            # convert to model coeff gradients and add to total coeff gradients
+            self.coeffs_bar += np.tensordot(self.modes, model.opd_bar)
+
+        # grab the correct gradients
+        if opt_param == 'coeffs':
+            self.g = self.coeffs_bar
+        elif opt_param == 'map':
+            self.g = self.map_bar.ravel()
+
+        # apply weights if provided
+        if opt_weights is not None:
+            self.g *= opt_weights
+
+        # append f to costs
+        self.costs.append(self.f)
+
+        return self.f.get(), self.g.get()
+
+
+
+class model:
+
+    def __init__(self, wvls, amp, opd, div, efl, psf, pupil_dx, focal_dx, error, jitter_kernel=None):
+
+        # model parameters
+        self.wvls = wvls
+        self.amp = amp
+        self.opd = opd
+        self.div = div
+        self.efl = efl
+        self.psf = psf
+        self.pupil_dx = pupil_dx
+        self.focal_dx = focal_dx
+        self.error = error
+        self.jitter_kernel = jitter_kernel
+
+        # initialize model
+        self.update()
+
+    def update(self):
+
+        # initialize intermediate products
+        gs = []
+        Gs = []
+        self.I = 0
+
+        # gradients too
+        G_bars = []
+        g_bars = []
+        self.opd_bar = 0
+
+        # loop through wavelengths
+        for wvl in self.wvls:
+            
+            # create pupil-plane complex wavefront
+            g = self.amp * np.exp((2j * np.pi / wvl) * (self.opd + self.div) / 1e3)
+            gs.append(g)
+
+            # propagate wavefront to focal plane using a matrix DFT
+            G = focus_fixed_sampling(wavefunction=g, input_dx=self.pupil_dx, prop_dist=self.efl, wavelength=wvl,
+                                     output_dx=self.focal_dx, output_samples=self.psf.shape[0], shift=(0, 0), method='mdft')
+            Gs.append(G)
+
+            # convert the focal-plane complex wavefront to intensity
+            self.I += np.abs(G) ** 2 / len(self.wvls)
+
+        # apply jitter if given
+        if self.jitter_kernel is not None:
+            jitter_fft = fft.fft2(fft.ifftshift(self.jitter_kernel))
+            I_fft = fft.fft2(fft.ifftshift(self.I))
+            self.I = fft.fftshift(fft.ifft2(jitter_fft * I_fft)).real
+
+        # calculate error between the model PSF and the measured PSF
+        # then calculate the gradient of the rror
+        self.E, I_bar = bias_and_gain_invariant_error(self.I, self.psf, mask=None)
+
+        # jitter gradient if given
+        if self.jitter_kernel is not None:
+            jitter_fft = fft.fft2(fft.ifftshift(self.jitter_kernel))
+            I_bar_fft = fft.fft2(fft.ifftshift(I_bar))
+            I_bar = fft.fftshift(fft.ifft2(np.conj(jitter_fft) * I_bar_fft)).real
+
+        # loop through wavelengths, per-wavelength G, and per-wavelength g
+        for wvl, G, g in zip(self.wvls, Gs, gs):
+
+            # calculate the focal-plane complex wavefront gradient with respect to the focal-plane intensity gradient
+            G_bar = 2 * I_bar * G 
+            G_bars.append(G_bar)
+
+            # calculate the pupil-plane complex wavefront gradient with respect to the focal-plane complex wavefront gradient
+            # this is just an inverse matrix-DFT
+            g_bar = focus_fixed_sampling_backprop(wavefunction=G_bar, input_dx=self.pupil_dx, prop_dist=self.efl, wavelength=wvl,
+                                                 output_dx=self.focal_dx, output_samples=self.amp.shape[0], shift=(0, 0), method='mdft')
+            g_bars.append(g_bar)
+
+            # calculate the pupil phase gradient with respect to the pupil-plane complex wavefront gradient, if
+            # multiple wavelengths are given then we sum the gradients across wavelengths to get the total gradient
+            self.opd_bar += (2 * np.pi / wvl) * np.imag(g_bar * np.conj(g)) / 1e3
+
+        return 
+
+
 
 
 class FFPR:

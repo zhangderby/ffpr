@@ -1,4 +1,5 @@
 import numpy as truenp
+import matplotlib.pyplot as plt
 
 from prysm import (
     mathops, 
@@ -31,6 +32,98 @@ def load_pickle(fpath):
     pkl_data = pickle.load(infile)
     infile.close()
     return pkl_data  
+
+def plot_psfs(psfs, fields):
+
+    fig, axs = plt.subplots(ncols=7, nrows=3, figsize=(15, 5), dpi=150)
+
+    v = np.max(np.array(psfs))
+
+    count = 0
+    lol = 0
+    for i, ax in enumerate(axs.flat):
+        if  i == 0 or i == 6:
+            ax.axis('off')
+        else:
+            im = ax.imshow(psfs[count].get(), cmap='magma', norm='log', vmax=v, vmin=1)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            if count in (0, 5, 12):
+                ax.set_ylabel(f'{fields[count][1] * 60:.01f}"', fontsize=14)
+            
+            if count >= 12:
+                ax.set_xlabel(f'{fields[count][0] * 60:.01f}"', fontsize=14)
+
+            if count in (1, 3):
+                c = "black"
+                l = f"Instr {lol:.0f}"
+                lol += 1
+
+                ax.text(64, 138, l,
+                        color=c, fontsize=14,
+                        ha='center', va='top',
+                        bbox=dict(facecolor='white', edgecolor=c, alpha=1, pad=0.1, boxstyle='round'))
+            
+            count += 1
+
+
+    cb = plt.colorbar(im, ax=axs, fraction=0.14, pad=0.04, label='Detector Counts')
+    cb.set_label('Detector Counts', fontsize=14)
+    cb.ax.tick_params(labelsize=14)
+    fig.set_tight_layout = True
+
+    return
+
+def plot_opds(opds, pupil, fields):
+
+    data = copy.deepcopy(opds)
+
+    rms_vals = []
+    avg_vals = []
+
+    for opd in data:
+        opd -= np.mean(opd[pupil])
+        rms_vals.append(np.sqrt(np.mean(opd[pupil] ** 2)))
+        avg_vals.append(np.mean(opd[pupil]))
+        opd[~pupil] = np.nan
+
+    v = 3 * np.max(np.array(rms_vals))
+
+    fig, axs = plt.subplots(ncols=7, nrows=3, figsize=(15, 5), dpi=150)
+
+    count = 0
+    for i, ax in enumerate(axs.flat):
+        if  i == 0 or i == 6:
+            ax.axis('off')
+        else:
+            im = ax.imshow(data[count].get(), cmap='coolwarm', vmax=v, vmin=-v)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            if count in (0, 5, 12):
+                ax.set_ylabel(f'{fields[count][1] * 60:.01f}"', fontsize=14)
+            
+            if count >= 12:
+                ax.set_xlabel(f'{fields[count][0] * 60:.01f}"', fontsize=14)
+
+            l = f'{rms_vals[count]:.0f} nm RMS'
+            c = "black"
+
+            ax.text(256, 550, l,
+                    color=c, fontsize=11,
+                    ha='center', va='top',
+                    bbox=dict(facecolor='white', edgecolor=c, alpha=1, pad=0.1, boxstyle='round'))
+            
+            count += 1
+
+
+    cb = plt.colorbar(im, ax=axs, fraction=0.14, pad=0.04)
+    cb.set_label('OPD (nm)', fontsize=14)
+    cb.ax.tick_params(labelsize=14)
+    fig.set_tight_layout = True
+
+    return
 
 def generate_freqs(
         Nf=2**18+1, 

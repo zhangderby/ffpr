@@ -26,7 +26,6 @@ from prysm.thinlens import (
 from prysm.geometry import (
     circle,
     spider,
-    gaussian
 )
 from prysm.polynomials import (
     lstsq,
@@ -50,9 +49,9 @@ from scipy.interpolate import RegularGridInterpolator
 from copy import deepcopy
 
 
-class off_axis_3m_TMA:
+class cobalt:
 
-    def __init__(self, opd_maps, config_stp, config_wcc, data_path_stp, data_path_wcc, use_raytrace=True):
+    def __init__(self, opd_maps, config_stp, config_wcc, data_path_stp, data_path_wcc, field_interps_nom,):
 
         ##### MODEL SETUP #####
         self.cfg_obs = config_stp['observatory']
@@ -101,19 +100,6 @@ class off_axis_3m_TMA:
         # defocus diversity
         self.defocus_vals = np.array(self.cfg_e2es['pr']['defocus_vals'])    # defocus [waves]
         self.defocus_vals *= self.wvl0 * 1e3                                 # [waves] -> [nm]
-
-        # use raytrace to include geometric aberrations?
-        self.field_aber = []
-        if use_raytrace is True:
-            self.raytrace = Lazuli_stop()
-            for pos in self.src_pos:
-                ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
-                field_opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
-                self.field_aber.append(field_opd * self.wvl0 * 1e3) # [waves -> um -> nm]
-        else:
-            self.raytrace = None
-            for pos in self.src_pos:
-                self.field_aber.append(np.zeros((self.npix, self.npix)))
         
         # pupil parameters
         D_pupil = float(self.cfg_tele['optics']['m1']['aper_clear_OD']) * 1000   # diameter [m -> mm]
@@ -139,6 +125,16 @@ class off_axis_3m_TMA:
         r_pup_norm = self.r_pup / (D_pupil / 2)
         self.defocus_map = hopkins(0, 2, 0, r_pup_norm, self.t_pup, 0) 
 
+        # zernikes
+        nms = [noll_to_nm(i) for i in range(1, 37)]
+        self.zernikes = np.array(zernike_nm_seq(nms, r_pup_norm, self.t_pup, norm=True))
+        self.inds = [i + 3 for i in range(8)]
+
+        # field dependent aberrations
+        self.field_interps_nom = field_interps_nom
+        coeffs_field = [[interp(np.array(pos)) for interp in self.field_interps_nom] for pos in self.src_pos]
+        self.field_aber = [sum_of_2d_modes(modes=self.zernikes[self.inds], weights=np.array(coeffs)).squeeze() for coeffs in coeffs_field]
+
         # grab f/# and EFL
         fno = float(self.cfg_tele['general']['f_number'])  # working f/#
         self.efl = fno * D_pupil    # effective focal length [mm]
@@ -146,117 +142,26 @@ class off_axis_3m_TMA:
         # optic OPDs
         self.opds = []
 
-        ################
-
-        for pos in self.src_pos:
-
-            opd = 0
-
-            for optic in self.cfg_tele['optics']:
-
-                if (optic == 'm1') or (optic == 'm4'):
-                
-                    # get beam diameter on optic
-                    D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
-                    
-                    # get opd map data
-                    opd_data = opd_maps[optic]['map']
-
-                    # get pixelscale and dimensions
-                    pixscl = opd_maps[optic]['dx']
-                    dim = opd_data.shape[0]
-
-                    # create input grid and interpolator for OPD map
-                    x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
-                    opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
-
-                    # create output grid and interpolate to match beam sampling in pupil
-                    x_f = y_f = truenp.linspace(-D_beam / 2, D_beam / 2, self.npix) # meters
-                    x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
-                    opd += np.array(opd_interp((x_f, y_f)))
-                
-                elif optic == ('m2'):
-
-                    # get rays on optic
-                    rv_2 = self.raytrace.get_footprint(surface='220mm CA dia. M2', fieldX=pos[0], fieldY=pos[1])
-
-                    # find footprint centroid
-                    cx = np.sum(rv_2.x)/len(rv_2.x) 
-                    cy = np.sum(rv_2.y)/len(rv_2.y)
-
-                    # get beam diameter on optic
-                    D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
-                    
-                    # get opd map data
-                    opd_data = opd_maps[optic]['map']
-
-                    # get pixelscale and dimensions
-                    pixscl = opd_maps[optic]['dx']
-                    dim = opd_data.shape[0]
-
-                    # create input grid and interpolator for OPD map
-                    x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
-                    opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
-
-                    # create output grid and interpolate to match beam sampling in pupil
-                    x_f = truenp.linspace(-D_beam / 2 - cx, D_beam / 2 - cx, self.npix) # meters
-                    y_f = truenp.linspace(-D_beam / 2 - cy, D_beam / 2 - cy, self.npix) # meters
-                    x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
-                    opd += np.array(opd_interp((x_f, y_f)))
-
-                elif optic == ('m3'):
-
-                    # get rays on optic
-                    rv_2 = self.raytrace.get_footprint(surface='220mm CA dia. M2', fieldX=pos[0], fieldY=pos[1])
-
-                    # find footprint centroid
-                    cx = np.sum(rv_2.x)/len(rv_2.x) 
-                    cy = np.sum(rv_2.y)/len(rv_2.y)
-
-                    # get beam diameter on optic
-                    D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
-                    
-                    # get opd map data
-                    opd_data = opd_maps[optic]['map']
-
-                    # get pixelscale and dimensions
-                    pixscl = opd_maps[optic]['dx']
-                    dim = opd_data.shape[0]
-
-                    # create input grid and interpolator for OPD map
-                    x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
-                    opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
-
-                    # create output grid and interpolate to match beam sampling in pupil
-                    x_f = truenp.linspace(-D_beam / 2 - cx, D_beam / 2 - cx, self.npix) # meters
-                    y_f = truenp.linspace(-D_beam / 2 - cy, D_beam / 2 - cy, self.npix) # meters
-                    x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
-                    opd += np.array(opd_interp((x_f, y_f)))
-
-
-
-        #####################
-
-        # for optic in self.cfg_tele['optics']:
+        for optic in self.cfg_tele['optics']:
             
-        #     # get beam diameter on optic
-        #     D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
+            # get beam diameter on optic
+            D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
             
-        #     # get opd map data
-        #     opd_data = opd_maps[optic]['map']
+            # get opd map data
+            opd_data = opd_maps[optic]['map']
 
-        #     # get pixelscale and dimensions
-        #     pixscl = opd_maps[optic]['dx']
-        #     dim = opd_data.shape[0]
+            # get pixelscale and dimensions
+            pixscl = opd_maps[optic]['dx']
+            dim = opd_data.shape[0]
 
-        #     # create input grid and interpolator for OPD map
-        #     x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
-        #     opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
+            # create input grid and interpolator for OPD map
+            x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
+            opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
 
-        #     # create output grid and interpolate to match beam sampling in pupil
-        #     x_f = y_f = truenp.linspace(-D_beam / 2, D_beam / 2, self.npix) # meters
-        #     x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
-        #     self.opds.append(np.array(opd_interp((x_f, y_f))))
+            # create output grid and interpolate to match beam sampling in pupil
+            x_f = y_f = truenp.linspace(-D_beam / 2, D_beam / 2, self.npix) # meters
+            x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
+            self.opds.append(np.array(opd_interp((x_f, y_f))))
 
         # M1 bending
         self.m1_bending_opd = np.zeros((self.npix, self.npix))
@@ -272,14 +177,9 @@ class off_axis_3m_TMA:
         self.resolution_as = np.rad2deg((self.wvl0 * 1e-6) / (D_pupil * 1e-3)) * 3600# angular resolution [arcsec/resolution_unit]       
         self.resolution_m = self.wvl0 * 1e-6 * fno                                   # spatial resolution[m/resolution_unit]
         m_per_as = self.resolution_m / self.resolution_as                       # [m/arcsec] 
-        self.pix_per_as = m_per_as / (self.dx_detector * 1e-6)                       # [pix/arcsec]
+        pix_per_as = m_per_as / (self.dx_detector * 1e-6)                       # [pix/arcsec]
         jitter = self.cfg_obs['pointing']['jitter_rms']                         # RMS pointing jitter [arcsec]
-        self.jitter = jitter * self.pix_per_as                                       # RMS pointing jitter [pix]
-
-        # make jitter kernel
-        x, y = make_xy_grid(shape=self.fov, dx=1)
-        self.jitter_kernel = gaussian(sigma=self.jitter, x=x, y=y, center=(0, 0))
-        self.jitter_kernel /= np.sum(self.jitter_kernel)
+        self.jitter = jitter * pix_per_as                                       # RMS pointing jitter [pix]
 
         # get QE and apply to throughput
         path2 = self.cfg_wcc['sensor']['qe']
@@ -317,43 +217,35 @@ class off_axis_3m_TMA:
     def add_m1_bending(self, bending_opd):
         self.m1_bending_opd += bending_opd
 
-    def move_optics(self, M1_motion=None, M2_motion=None, M3_motion=None, M4_motion=None):
+    # def move_optics(self, M1_motion=None, M2_motion=None, M3_motion=None, M4_motion=None):
 
-        self.raytrace = Lazuli_stop(M1_dict=M1_motion, M2_dict=M2_motion, M3_dict=M3_motion, M4_dict=M4_motion, motion_loc=1)
+    #     self.raytrace = Lazuli_stop(M1_dict=M1_motion, M2_dict=M2_motion, M3_dict=M3_motion, M4_dict=M4_motion, motion_loc=1)
         
-        self.field_aber = []
-        for pos in self.src_pos:
-            ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
-            field_opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
-            self.field_aber.append(field_opd * self.wvl0 * 1e3) # [waves -> um -> nm]
+    #     self.field_aber = []
+    #     for pos in self.src_pos:
+    #         ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
+    #         field_opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
+    #         self.field_aber.append(field_opd * self.wvl0 * 1e3) # [waves -> um -> nm]
 
-    def reset_optics(self,):
+    # def reset_optics(self,):
         
-        self.raytrace = Lazuli_stop()
+    #     self.raytrace = Lazuli_stop()
 
-        self.field_aber = []
-        for pos in self.src_pos:
-            ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
-            field_opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
-            self.field_aber.append(field_opd * self.wvl0 * 1e3) # [waves -> um -> nm]
+    #     self.field_aber = []
+    #     for pos in self.src_pos:
+    #         ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
+    #         field_opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
+    #         self.field_aber.append(field_opd * self.wvl0 * 1e3) # [waves -> um -> nm]
 
     def set_source_parameters(self, magnitudes, positions, defocus_vals):
         self.src_mags = magnitudes
         self.defocus_vals = np.array(defocus_vals)
         self.defocus_vals *= ((self.wvls[0] + self.wvls[-1]) / 2) * 1e3   
 
-        self.src_pos = []
-        for pos in positions:
-            src_x = pos[0] / 60
-            src_y = pos[1] / 60
-            self.src_pos.append((src_x, src_y))
+        self.src_pos = positions
 
-        if self.raytrace is not None:
-            self.field_aber = []
-            for pos in self.src_pos:
-                ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
-                field_opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
-                self.field_aber.append(field_opd * self.wvl0 * 1e3) # [waves -> um -> nm]      
+        coeffs_field = [[interp(np.array(pos)) for interp in self.field_interps_nom] for pos in self.src_pos]
+        self.field_aber = [sum_of_2d_modes(modes=self.zernikes[self.inds], weights=np.array(coeffs)).squeeze() for coeffs in coeffs_field]     
 
     def set_cam_exposure_time(self, exposure_time):
         self.exp_time = exposure_time
@@ -395,8 +287,7 @@ class off_axis_3m_TMA:
         # calculate wavefront power
         # using vega flux zero point of 702e10 photons/cm^2/s/m from:
         # https://www.astronomy.ohio-state.edu/martini.10/usefuldata.html
-        dx_sq = (self.dx_pup / 10) ** 2                                             # [mm -> cm^2]
-        collecting_area = dx_sq * np.sum(self.pupil)                                # [cm^2]
+        collecting_area = np.pi * (150 ** 2)                                        # [cm^2]
         bandwidth = (self.wvls[-1] - self.wvls[0]) * 1e-6                           # [um -> m]
         flux = 702e10 * collecting_area * bandwidth * 10 ** (-src_magnitude / 2.5)  # [photons/s]
 
@@ -477,9 +368,7 @@ class off_axis_3m_TMA:
 
             for _ in range(stacked_frames):
                 # add jitter as gaussian blur
-                jitter_fft = fft.fft2(fft.ifftshift(self.jitter_kernel))
-                psf_fft = fft.fft2(fft.ifftshift(psf_intensity))
-                psf_with_jitter = fft.fftshift(fft.ifft2(jitter_fft * psf_fft)).real
+                psf_with_jitter = ndimage.gaussian_filter(psf_intensity, sigma=self.jitter, mode='nearest')
 
                 # add photon noise
                 psf_with_photon_noise = np.random.poisson(psf_with_jitter)
@@ -509,3 +398,74 @@ class off_axis_3m_TMA:
             images.append(image)
 
         return images
+    
+
+def create_field_interps():
+
+    fnames = ["Z4", "Z5", "Z6", "Z7", "Z8", "Z9", "Z10", "Z11"]
+    path = "/home/derbyk/src/ffpr/data/new_fields/"
+
+    # Prepare a 12x12 array filled with zeros
+    field_coeffs_nom = truenp.zeros((len(fnames), 11, 11))
+
+    coeff_index = 0
+
+    for z, fname in enumerate(fnames):
+
+        arr = truenp.zeros((12, 12))
+
+        with open(path+fname+".txt", "r", encoding="utf-16") as f:
+            lines = f.readlines()
+
+        row_index = 0
+
+        for i, line in enumerate(lines):
+            
+            if i > 22:
+
+                line = line.strip()
+
+                # Skip empty or separator rows
+                if not line or "====" in line:
+                    continue
+
+                # HEADER ROW (no "||")
+                if "||" not in line:
+                    # Parse the x-values
+                    parts = line.split()
+                    nums = [float(x) for x in parts]
+
+                    # Insert into row 0, columns 1..11
+                    arr[0, 1:1+len(nums)] = nums
+                    row_index += 1
+                    continue
+
+                # DATA ROWS (contain "||")
+                line = line.replace("||", " ")
+                parts = line.split()
+                nums = [float(x) for x in parts]
+
+                # First value goes into column 0 (y-value)
+                arr[row_index, 0] = nums[0]
+
+                # Remaining 11 values go into columns 1..11
+                arr[row_index, 1:12] = nums[1:]
+
+                row_index += 1
+
+        # if z == 0:
+        #     arr[-2, 6] += -5
+        #     arr[6, 3] += 1
+        #     arr[6, 9] += -1
+
+        field_coeffs_nom[coeff_index, : , :] = arr[1:, 1:] * 0.625 * 1e3
+
+        coeff_index += 1
+
+    fields_x = arr[0, 1:]
+    fields_y = arr[1:, 0]
+
+    # create interpolators for field-dependent zernikes
+    field_interps_nom = [interpolate.RegularGridInterpolator((fields_x, fields_y), field_coeffs_nom[i, :, :], method='cubic') for i in range(field_coeffs_nom.shape[0])]
+
+    return field_interps_nom, fields_x, fields_y
