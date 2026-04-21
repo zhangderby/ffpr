@@ -152,7 +152,7 @@ class F77LBFGSB:
         self.pgtol = 1e-999
 
         # other stuff to be added to the interface later
-        self.maxls = 30
+        self.maxls = 20
         self.iprint = 1
 
     def _call_fortran(self):
