@@ -38,8 +38,6 @@ from prysm.polynomials import (
     sum_of_2d_modes_backprop
 )
 
-import toml
-
 from astropy.io import (
     fits,
     ascii,
@@ -52,188 +50,122 @@ from scipy.interpolate import RegularGridInterpolator
 from copy import deepcopy
 
 
-class telescope:
+class off_axis_3m_TMA:
 
-    def __init__(self, config, optic_opd_data):
+    def __init__(self, opd_maps, config_stp, config_wcc, data_path_stp, data_path_wcc, use_raytrace=True):
 
-        # reference wavelength and sampled wavelengths in bandwidth
-        self.wvl0 = config['general']['wvl']
-        bandwidth = config['general']['bandwidth']
-        n_wvls = config['general']['n_wvls']
-        self.wvls = np.linspace(self.wvl0 - self.wvl0 * bandwidth / 2, self.wvl0 + self.wvl0 * bandwidth / 2, n_wvls)
+        ##### MODEL SETUP #####
+        self.cfg_obs = config_stp['observatory']
+        self.cfg_tele = config_stp['telescope']
+        self.cfg_wcc = config_wcc['common_params']
+        self.cfg_e2es = config_wcc['E2ES_default']
+        self.path_stp = data_path_stp
+        self.path_wcc = data_path_wcc
 
         # sampling parameters
-        self.npix_pupil = config['general']['npix_pupil']
-        self.npix_focal = config['general']['npix_focal']
+        self.npix = int(self.cfg_e2es['simulation']['beam_sampling'])  # beam sampling [pix]
+        self.fov = int(self.cfg_e2es['simulation']['fov'])             # FOV on detector [pix]
+
+        # get model wavelengths from reference wavlength/bandwidth
+        self.wvl0 = float(self.cfg_wcc['spectrum']['wvl_reference']) * 1e6   # ref wavelength [m -> um]
+        bw = float(self.cfg_wcc['spectrum']['bandwidth'])               # bandwidth as a fraction of ref wavelength
+        n_wvl = int(self.cfg_e2es['simulation']['wvl_sampling'])        # number of wavelengths to sample the spectrum
+        self.wvls = np.linspace(self.wvl0 - self.wvl0 * bw / 2, self.wvl0 + self.wvl0 * bw / 2, n_wvl)
+
+        # throughput calculation
+        self.throughput = np.ones((len(self.wvls),))
+
+        for optic in self.cfg_tele['optics']:
+
+            # get path to coating data from config
+            path2 = self.cfg_tele['optics'][optic]['coating_refl']
+            
+            # load reflectivity curve and create interpolator
+            coat_data = ascii.read(self.path_stp + path2)
+            wvl = coat_data.columns[0].data
+            refl = coat_data.columns[1].data
+            refl_interp = interpolate.PchipInterpolator(wvl, refl)
+
+            # interp for model wavelengths and multiply into throughput
+            self.throughput *= refl_interp(self.wvls * 1e3) # wvls [um -> nm] to match reflectivity curve units        
 
         # source parameters
-        self.src_magnitudes = [config['sources'][source]['magnitude'] for source in config['sources']]
-        self.src_positions = [(config['sources'][source]['position_x'], config['sources'][source]['position_y'])
-                               for source in config['sources']]
+        self.src_mags = []
+        self.src_pos = []
+        for source in self.cfg_wcc['sources']:
+            self.src_mags.append(float(self.cfg_wcc['sources'][source]['magnitude'])) # magnitudes [Rmag]
+            src_x = float(self.cfg_wcc['sources'][source]['position_x']) / 60         # positions [arcmin -> deg]
+            src_y = float(self.cfg_wcc['sources'][source]['position_y']) / 60         # positions [arcmin -> deg]
+            self.src_pos.append((src_x, src_y)) 
+
+        # defocus diversity
+        self.defocus_vals = np.array(self.cfg_e2es['pr']['defocus_vals'])    # defocus [waves]
+        self.defocus_vals *= self.wvl0 * 1e3                                 # [waves] -> [nm]
+
+        # use raytrace to include geometric aberrations?
+        self.field_aber = []
+        if use_raytrace is True:
+            self.raytrace = Lazuli_stop()
+            for pos in self.src_pos:
+                ray_data = self.raytrace.get_OPD(fieldX=pos[0], fieldY=pos[1], npx=self.npix)
+                field_opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
+                self.field_aber.append(field_opd * self.wvl0 * 1e3) # [waves -> um -> nm]
+        else:
+            self.raytrace = None
+            for pos in self.src_pos:
+                self.field_aber.append(np.zeros((self.npix, self.npix)))
         
-        # optical parameters
-        self.d_pupil = config['optics']['m1']['diam']
-        self.f_num = config['general']['f_number']
-        self.f_eff = config['general']['f_eff']
-        self.
+        # pupil parameters
+        D_pupil = float(self.cfg_tele['optics']['m1']['aper_clear_OD']) * 1000   # diameter [m -> mm]
+        D_obs = float(self.cfg_tele['optics']['m1']['aper_clear_ID']) * 1000     # M2 obsurcation diameter [m -> mm]
+        D_support = float(self.cfg_tele['optics']['m2']['support_width']) * 1000 # M2 support width [m -> mm]
+        n_support = int(self.cfg_tele['optics']['m2']['n_supports'])             # number of M2 supports
 
-        # telescope pupil
-        x, y = make_xy_grid(self.npix_pupil, diameter=self.d_pupil)
-        r, t = cart_to_polar(x, y)
-        self.pupil = circle(radius=self.d_pupil / 2, r=r)
+        # pupil grids
+        self.x_pup, self.y_pup = make_xy_grid(self.npix, diameter=D_pupil)
+        self.r_pup, self.t_pup = cart_to_polar(self.x_pup, self.y_pup)
 
-        # calculate throughput
-        self._calc_throughput(config)
-        
-        # initialize raytrace model
-        self.raytrace = Lazuli_stop()
+        # pupil pixelscale
+        self.dx_pup = D_pupil / self.npix               
 
-        # calculate field-dependent raytrace OPDs
-        self._calc_opds_field()
+        # pupil mask
+        self.pupil = circle(radius=D_pupil / 2, r=self.r_pup)
+        if D_obs > 0:
+            self.pupil = self.pupil ^ circle(radius=D_obs / 2, r=self.r_pup)
+        if n_support > 0:
+            self.pupil = self.pupil & spider(vanes=n_support, width=D_support, x=self.x_pup, y=self.y_pup)
 
-        # calculate field-dependent optical surface errors
-        self._calc_opds_optics(config, optic_opd_data)
+        # defocus map  
+        r_pup_norm = self.r_pup / (D_pupil / 2)
+        self.defocus_map = hopkins(0, 2, 0, r_pup_norm, self.t_pup, 0) 
 
-    def _calc_opds_optics(self, config, optic_opd_data):
-
-        self.opds_optics = []
-
-        maps = [optic_opd_data[optic]['map'] for optic in optic_opd_data]
-        dx_vals = [optic_opd_data[optic]['dx'] for optic in optic_opd_data]
-
-        optics = config['optics']
-
-        for position in self.src_positions:
-
-            opd = 0
-
-            for optic, map, dx in zip(optics, maps, dx_vals):
-                
-
-
-
-
-
-
-
-    
-        
-
+        # grab f/# and EFL
+        fno = float(self.cfg_tele['general']['f_number'])  # working f/#
+        self.efl = fno * D_pupil    # effective focal length [mm]
 
         # optic OPDs
         self.opds = []
 
-        ################
-
-        for pos in self.src_pos:
-
-            opd = 0
-
-            for optic in self.cfg_tele['optics']:
-
-                if (optic == 'm1') or (optic == 'm4'):
-                
-                    # get beam diameter on optic
-                    D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
-                    
-                    # get opd map data
-                    opd_data = opd_maps[optic]['map']
-
-                    # get pixelscale and dimensions
-                    pixscl = opd_maps[optic]['dx']
-                    dim = opd_data.shape[0]
-
-                    # create input grid and interpolator for OPD map
-                    x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
-                    opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
-
-                    # create output grid and interpolate to match beam sampling in pupil
-                    x_f = y_f = truenp.linspace(-D_beam / 2, D_beam / 2, self.npix) # meters
-                    x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
-                    opd += np.array(opd_interp((x_f, y_f)))
-                
-                elif optic == ('m2'):
-
-                    # get rays on optic
-                    rv_2 = self.raytrace.get_footprint(surface='220mm CA dia. M2', fieldX=pos[0], fieldY=pos[1])
-
-                    # find footprint centroid
-                    cx = np.sum(rv_2.x)/len(rv_2.x) 
-                    cy = np.sum(rv_2.y)/len(rv_2.y)
-
-                    # get beam diameter on optic
-                    D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
-                    
-                    # get opd map data
-                    opd_data = opd_maps[optic]['map']
-
-                    # get pixelscale and dimensions
-                    pixscl = opd_maps[optic]['dx']
-                    dim = opd_data.shape[0]
-
-                    # create input grid and interpolator for OPD map
-                    x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
-                    opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
-
-                    # create output grid and interpolate to match beam sampling in pupil
-                    x_f = truenp.linspace(-D_beam / 2 - cx, D_beam / 2 - cx, self.npix) # meters
-                    y_f = truenp.linspace(-D_beam / 2 - cy, D_beam / 2 - cy, self.npix) # meters
-                    x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
-                    opd += np.array(opd_interp((x_f, y_f)))
-
-                elif optic == ('m3'):
-
-                    # get rays on optic
-                    rv_2 = self.raytrace.get_footprint(surface='220mm CA dia. M2', fieldX=pos[0], fieldY=pos[1])
-
-                    # find footprint centroid
-                    cx = np.sum(rv_2.x)/len(rv_2.x) 
-                    cy = np.sum(rv_2.y)/len(rv_2.y)
-
-                    # get beam diameter on optic
-                    D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
-                    
-                    # get opd map data
-                    opd_data = opd_maps[optic]['map']
-
-                    # get pixelscale and dimensions
-                    pixscl = opd_maps[optic]['dx']
-                    dim = opd_data.shape[0]
-
-                    # create input grid and interpolator for OPD map
-                    x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
-                    opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
-
-                    # create output grid and interpolate to match beam sampling in pupil
-                    x_f = truenp.linspace(-D_beam / 2 - cx, D_beam / 2 - cx, self.npix) # meters
-                    y_f = truenp.linspace(-D_beam / 2 - cy, D_beam / 2 - cy, self.npix) # meters
-                    x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
-                    opd += np.array(opd_interp((x_f, y_f)))
-
-
-
-        #####################
-
-        # for optic in self.cfg_tele['optics']:
+        for optic in self.cfg_tele['optics']:
             
-        #     # get beam diameter on optic
-        #     D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
+            # get beam diameter on optic
+            D_beam = float(self.cfg_e2es['optics'][optic]['beam_size']) # meters
             
-        #     # get opd map data
-        #     opd_data = opd_maps[optic]['map']
+            # get opd map data
+            opd_data = opd_maps[optic]['map']
 
-        #     # get pixelscale and dimensions
-        #     pixscl = opd_maps[optic]['dx']
-        #     dim = opd_data.shape[0]
+            # get pixelscale and dimensions
+            pixscl = opd_maps[optic]['dx']
+            dim = opd_data.shape[0]
 
-        #     # create input grid and interpolator for OPD map
-        #     x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
-        #     opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
+            # create input grid and interpolator for OPD map
+            x_i = y_i = truenp.linspace(-pixscl * dim / 2, pixscl * dim / 2, dim)
+            opd_interp = RegularGridInterpolator((x_i, y_i), opd_data)
 
-        #     # create output grid and interpolate to match beam sampling in pupil
-        #     x_f = y_f = truenp.linspace(-D_beam / 2, D_beam / 2, self.npix) # meters
-        #     x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
-        #     self.opds.append(np.array(opd_interp((x_f, y_f))))
+            # create output grid and interpolate to match beam sampling in pupil
+            x_f = y_f = truenp.linspace(-D_beam / 2, D_beam / 2, self.npix) # meters
+            x_f, y_f = truenp.meshgrid(x_f, y_f, indexing='ij')
+            self.opds.append(np.array(opd_interp((x_f, y_f))))
 
         # M1 bending
         self.m1_bending_opd = np.zeros((self.npix, self.npix))
@@ -486,65 +418,3 @@ class telescope:
             images.append(image)
 
         return images
-    
-
-    def _calc_throughput(self, config):
-        
-        # initialize
-        self.throughput = np.ones(len(self.wvls))
-
-        # grab optics from config
-        optics = config['optics']
-
-        # loop through optics
-        for optic in optics:
-            
-            # get path to coating file
-            path = optics[optic]['coating']
-
-            # load coating data
-            coat_data = ascii.read(path)
-
-            # create interpolator
-            wvl = coat_data.columns[0].data
-            refl = coat_data.columns[1].data
-            interp = interpolate.PchipInterpolator(wvl, refl)
-
-            # interp for wavelengths and multiply into throughput
-            self.throughput *= interp(self.wvls * 1e3) # [um -> nm] to match coating data units
-
-        # get path to QE curve
-        path = config['detector']['qe']
-
-        # load QE curve
-        qe_data = ascii.read(path)
-
-        # create interpolator
-        wvl = qe_data.columns[0].data
-        qe = qe_data.columns[1].data
-        interp = interpolate.PchipInterpolator(wvl, qe)
-
-        # interp for wavelengths and multiply into throughput
-        self.throughput *= interp(self.wvls * 1e3) # [um -> nm] to match coating data units
-
-        return 
-    
-    def _calc_opds_field(self):
-        
-        # initialize
-        self.opds_field = []
-
-        # loop through field positions
-        for position in self.src_positions:
-            
-            # get ray data from raytrace
-            # dividing by 60 [arcmin -> degrees] for raytrace
-            ray_data = self.raytrace.get_OPD(fieldX=position[0] / 60, fieldY=position[1] / 60, npx=self.npix_pupil)
-
-            # convert to OPD map
-            opd = np.array(ray_data['wavefront'].array.data * ~ray_data['wavefront'].array.mask)
-
-            # convert units to nm and add to list
-            self.opds_field.append(opd * self.wvl0 * 1e3)
-
-        return

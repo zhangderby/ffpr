@@ -83,20 +83,26 @@ class FFPR2():
 
         # for defining field-linear terms due to misalignments
         self.field_terms = np.zeros(4)
+        # self.field_terms = np.zeros(10)
 
         # create zernike basis 
         x, y = make_xy_grid(shape=amp.shape, diameter=2)
         r_norm, t = cart_to_polar(x, y)
         nms = [noll_to_nm(i) for i in range(2, max_zernike + 1)]
         zernikes = list(zernike_nm_seq(nms, r_norm, t, norm=True))
+
+        # for some reason, how the basis is normalized REALLY matters
+        # having everything normalized to unit peak-to-valley works best
+        zernikes = [z - np.min(z) for z in zernikes]
         zernikes = [z / np.max(np.abs(z)) for z in zernikes]
         self.coeffs = np.zeros(len(zernikes)) 
 
         self.costs = []
 
         # initialize individual PDPR classes for each field
-        self.PDPR_list = [PDPR(wvls=wvls, amp=amp, modes=zernikes, coeffs=np.zeros(len(zernikes)), map=np.zeros_like(amp), divs=divs[f], efl=efl,
-                               psfs=psfs[f], pupil_dx=pupil_dx, focal_dx=focal_dx, error=error, jitter_kernel=jitter_kernel) for f in range(len(fields))]
+        self.PDPR_list = [PDPR(wvls=wvls, amp=amp, modes=zernikes, coeffs=np.zeros(len(zernikes)), map=np.zeros((amp.shape[0], amp.shape[1])),
+                               divs=divs[f], efl=efl, psfs=psfs[f], pupil_dx=pupil_dx, focal_dx=focal_dx, error=error, 
+                               jitter_kernel=jitter_kernel) for f in range(len(fields))]
         
     def fg(self, x, opt_param=None, opt_weights=None):
 
@@ -108,21 +114,25 @@ class FFPR2():
 
         # reset gradients
         self.field_terms_bar = np.zeros(4)
+        # self.field_terms_bar = np.zeros(10)
         self.coeffs_bar = 0
         self.maps_bar = 0
 
-        # if no optimization parameter set, default to coeffs
+        # if no optimization parameter set, default to all
         if opt_param is None:
-            opt_param = 'coeffs'
+            opt_param = 'all'
 
         # set the optimization parameter x
-        # for now, this should be 'coeffs', or 'maps'
-        if opt_param == 'coeffs':
+        # for now, this should be 'all', 'field', or 'common'
+        if opt_param == 'all':
             self.field_terms = x[:4]
             self.coeffs = x[4:]
-        elif opt_param == 'map':
-            for PDPR in self.PDPR_list:
-                PDPR.map = x.reshape(PDPR.map.shape)
+            # self.field_terms = x[:10]
+            # self.coeffs = x[10:]
+        if opt_param == 'field':
+            self.field_terms = x
+        if opt_param == 'common':
+            self.coeffs = x
 
         # apply weights if provided
         if opt_weights is not None:
@@ -131,14 +141,42 @@ class FFPR2():
         # loop through PDPR classes
         for PDPR, field in zip(self.PDPR_list, self.fields):
 
-            if opt_param == 'coeffs':
+            if opt_param == 'all':
                 coeffs = copy.deepcopy(self.coeffs)
+
                 coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1] 
-                coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1] 
+                coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1]
                 coeffs[4] += -self.field_terms[3] * field[0] + self.field_terms[2] * field[1]
+
+                # coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1]
+                # coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1]
+                # coeffs[4] += self.field_terms[4] * field[0] + self.field_terms[5] * field[1]
+                # coeffs[5] += self.field_terms[6] * field[0] + self.field_terms[7] * field[1]
+                # coeffs[6] += self.field_terms[8] * field[0] + self.field_terms[9] * field[1]
+
                 PDPR.fg(x=coeffs, opt_param='coeffs', opt_weights=None)
-            elif opt_param == 'map':
-                PDPR.fg(x=x, opt_param='map', opt_weights=None)
+            elif opt_param == 'field':
+                coeffs = copy.deepcopy(self.coeffs)
+
+                coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1] 
+                coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1]
+                coeffs[4] += -self.field_terms[3] * field[0] + self.field_terms[2] * field[1]
+                
+                # coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1]
+                # coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1]
+                # coeffs[4] += self.field_terms[4] * field[0] + self.field_terms[5] * field[1]
+                # coeffs[5] += self.field_terms[6] * field[0] + self.field_terms[7] * field[1]
+                # coeffs[6] += self.field_terms[8] * field[0] + self.field_terms[9] * field[1]
+
+                PDPR.fg(x=coeffs, opt_param='coeffs', opt_weights=None)
+            elif opt_param == 'common':
+                coeffs = copy.deepcopy(self.coeffs)
+
+                coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1] 
+                coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1]
+                coeffs[4] += -self.field_terms[3] * field[0] + self.field_terms[2] * field[1]
+
+                PDPR.fg(x=coeffs, opt_param='coeffs', opt_weights=None)
 
             # add model error to f
             self.f += PDPR.f / len(self.fields)
@@ -157,124 +195,33 @@ class FFPR2():
             self.field_terms_bar[2] += (coeffs_bar[3] * field[0]) + (coeffs_bar[4] * field[1])
             self.field_terms_bar[3] += (coeffs_bar[3] * field[1]) + (-coeffs_bar[4] * field[0])
 
+            # self.field_terms_bar[0] += coeffs_bar[2] * field[0]
+            # self.field_terms_bar[1] += coeffs_bar[2] * field[1]
+            # self.field_terms_bar[2] += coeffs_bar[3] * field[0]
+            # self.field_terms_bar[3] += coeffs_bar[3] * field[1]
+            # self.field_terms_bar[4] += coeffs_bar[4] * field[0]
+            # self.field_terms_bar[5] += coeffs_bar[4] * field[1]
+            # self.field_terms_bar[6] += coeffs_bar[5] * field[0]
+            # self.field_terms_bar[7] += coeffs_bar[5] * field[1]
+            # self.field_terms_bar[8] += coeffs_bar[6] * field[0]
+            # self.field_terms_bar[9] += coeffs_bar[6] * field[1]
+
         # grab the correct gradients
-        if opt_param == 'coeffs':
+        if opt_param == 'all':
             self.g = np.concatenate((self.field_terms_bar, self.coeffs_bar), axis=0)
-        elif opt_param == 'map':
-            self.g = self.maps_bar.ravel()
+        elif opt_param == 'field':
+            self.g = self.field_terms_bar
+        elif opt_param == 'common':
+            self.g = self.coeffs_bar
 
         # apply weights if provided
         if opt_weights is not None:
             self.g *= opt_weights
 
         # append f to costs
-        self.costs.append(self.f)
+        self.costs.append(float(self.f))
 
-        return self.f.get(), self.g.get()
-    
-    # def __init__(self, wvls, amp, max_zernike, fields, divs, efl, psfs, pupil_dx, focal_dx, error):
-        
-    #     # psf fields
-    #     self.fields = fields
-
-    #     # for defining field-linear terms due to misalignments
-    #     self.field_terms = np.zeros(12)
-
-    #     # create zernike basis 
-    #     x, y = make_xy_grid(shape=amp.shape, diameter=2)
-    #     r_norm, t = cart_to_polar(x, y)
-    #     nms = [noll_to_nm(i) for i in range(2, max_zernike + 1)]
-    #     zernikes = list(zernike_nm_seq(nms, r_norm, t, norm=True))
-    #     zernikes = [z / np.max(np.abs(z)) for z in zernikes]
-    #     self.coeffs = np.zeros(len(zernikes)) 
-
-    #     self.costs = []
-
-    #     # initialize individual PDPR classes for each field
-    #     self.PDPR_list = [PDPR(wvls=wvls, amp=amp, modes=zernikes, coeffs=np.zeros(len(zernikes)), map=np.zeros_like(amp), divs=divs[f], efl=efl,
-    #                            psfs=psfs[f], pupil_dx=pupil_dx, focal_dx=focal_dx, error=error) for f in range(len(fields))]
-        
-    # def fg(self, x, opt_param=None, opt_weights=None):
-
-    #     x = np.array(x)
-
-    #     # reset f, g
-    #     self.f = 0
-    #     self.g = 0
-
-    #     # reset gradients
-    #     self.field_terms_bar = np.zeros(12)
-    #     self.coeffs_bar = 0
-    #     self.maps_bar = 0
-
-    #     # if no optimization parameter set, default to common path coeffs
-    #     if opt_param is None:
-    #         opt_param = 'coeffs'
-
-    #     # set the optimization parameter x
-    #     # for now, this should be 'field', 'coeffs', or 'maps'
-    #     if opt_param == 'field':
-    #         self.field_terms = x
-    #     elif opt_param == 'coeffs':
-    #         self.coeffs = x
-    #     elif opt_param == 'map':
-    #         for PDPR in self.PDPR_list:
-    #             PDPR.map = x.reshape(PDPR.map.shape)
-
-    #     # apply weights if provided
-    #     if opt_weights is not None:
-    #         x *= opt_weights
-
-    #     # loop through PDPR classes
-    #     for PDPR, field in zip(self.PDPR_list, self.fields):
-
-    #         if (opt_param == 'field') or (opt_param == 'coeffs'):
-    #             coeffs = copy.deepcopy(self.coeffs)
-    #             coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1] + self.field_terms[2]
-    #             coeffs[3] += self.field_terms[3] * field[0] + self.field_terms[4] * field[1] + self.field_terms[5]
-    #             coeffs[4] += -self.field_terms[4] * field[0] + self.field_terms[3] * field[1] + self.field_terms[6]
-    #             coeffs[5:10] += self.field_terms[7:]
-    #             PDPR.fg(x=coeffs, opt_param='coeffs', opt_weights=None)
-    #         elif opt_param == 'map':
-    #             PDPR.fg(x=x, opt_param=opt_param, opt_weights=None)
-
-    #         # add model error to f
-    #         self.f += PDPR.f / len(self.fields)
-
-    #         # add model OPD gradients to total OPD gradients
-    #         self.maps_bar += PDPR.map_bar
-
-    #         # convert model OPD gradient to model coeff gradient then add to total coeff gradients
-    #         coeffs_bar = PDPR.coeffs_bar
-
-    #         self.coeffs_bar += coeffs_bar
-
-    #         # convert total coeff gradients to slope/constant gradients
-    #         self.field_terms_bar[0] += coeffs_bar[2] * field[0]
-    #         self.field_terms_bar[1] += coeffs_bar[2] * field[1]
-    #         self.field_terms_bar[2] += coeffs_bar[2]
-    #         self.field_terms_bar[3] += (coeffs_bar[3] * field[0]) + (coeffs_bar[4] * field[1])
-    #         self.field_terms_bar[4] += (coeffs_bar[3] * field[1]) + (-coeffs_bar[4] * field[0])
-    #         self.field_terms_bar[5] += coeffs_bar[3]
-    #         self.field_terms_bar[6] += coeffs_bar[4]
-    #         self.field_terms_bar[7:] += coeffs_bar[5:10]
-
-    #      # grab the correct gradients
-    #     if opt_param == 'field':
-    #         self.g = self.field_terms_bar
-    #     elif opt_param == 'coeffs':
-    #         self.g = self.coeffs_bar
-    #     elif opt_param == 'map':
-    #         self.g = self.maps_bar.ravel()
-
-    #     # apply weights if provided
-    #     if opt_weights is not None:
-    #         self.g *= opt_weights
-
-    #     # append f to costs
-    #     self.costs.append(self.f)
-
-    #     return self.f.get(), self.g.get()
+        return self.f, self.g
         
 
 
@@ -292,11 +239,11 @@ class PDPR():
 
         # initialize models
         if type(psfs) == list:
-            self.models = [model(wvls=wvls, amp=amp, opd=self.opd, div=div, efl=efl, psf=psf, pupil_dx=pupil_dx, 
-                                    focal_dx=focal_dx, error=error, jitter_kernel=jitter_kernel) for div, psf in zip(divs, psfs)]
+            self.models = [model(wvls=wvls, amp=amp, opd=self.opd, div=div, efl=efl, psf=psf, pupil_dx=pupil_dx, focal_dx=focal_dx, error=error, 
+                                 jitter_kernel=jitter_kernel) for div, psf, mask in zip(divs, psfs)]
         else:
             self.models = [model(wvls=wvls, amp=amp, opd=self.opd, div=divs, efl=efl, psf=psfs, pupil_dx=pupil_dx, 
-                                    focal_dx=focal_dx, error=error, jitter_kernel=jitter_kernel)]
+                                 focal_dx=focal_dx, error=error, jitter_kernel=jitter_kernel)]
         
         
     def fg(self, x, opt_param=None, opt_weights=None):
@@ -358,7 +305,7 @@ class PDPR():
             self.g *= opt_weights
 
         # append f to costs
-        self.costs.append(self.f)
+        self.costs.append(float(self.f))
 
         return self.f.get(), self.g.get()
 
