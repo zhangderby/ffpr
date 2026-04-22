@@ -92,7 +92,7 @@ class FFPR2():
         zernikes = list(zernike_nm_seq(nms, r_norm, t, norm=True))
 
         # for some reason, how the basis is normalized REALLY matters
-        # having everything normalized to unit peak-to-valley centered about 0 works best
+        # having everything normalized to unit peak-to-valley works best
         zernikes = [z - np.min(z) for z in zernikes]
         zernikes = [z / np.max(np.abs(z[amp])) for z in zernikes]
         self.coeffs = np.zeros(len(zernikes)) 

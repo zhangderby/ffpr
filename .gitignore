@@ -1,2 +1,7 @@
 __pycache__/*
-data/*
+data/*.fits
+data/*.pkl
+data/*.txt
+data/new_fields/*
+archive/*
+sim_results/*

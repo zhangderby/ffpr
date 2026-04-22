@@ -85,15 +85,18 @@ def plot_opds_7(opds, pupil, fields):
     data = copy.deepcopy(opds)
 
     rms_vals = []
-    avg_vals = []
+    max_vals = []
+    min_vals = []
 
     for opd in data:
         opd -= np.mean(opd[pupil])
         rms_vals.append(np.sqrt(np.mean(opd[pupil] ** 2)))
-        avg_vals.append(np.mean(opd[pupil]))
+        max_vals.append(np.max(opd[pupil]))
+        min_vals.append(np.min(opd[pupil]))
         opd[~pupil] = np.nan
 
-    v = 4 * np.max(np.array(rms_vals))
+    # v = 4 * np.max(np.array(rms_vals))
+    v = np.max(np.array([np.max(np.array(max_vals)), np.abs(np.min(np.array(min_vals)))]))
 
     fig = plt.figure(figsize=(9, 4), dpi=150)
     spec = GridSpec(ncols=9, nrows=2, width_ratios=[1, 1, 1, 1, 1, 1, 1, 1, 0.2])

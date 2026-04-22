@@ -1,0 +1,101 @@
+[general]
+
+wvl = 0.625 # [um] central/reference wavelength
+bandwidth = 0.24 # [unitless] bandwidth as a fraction of 'wvl'
+n_wvls = 24 # [unitless] number of wavelengths to sample bandwidth
+
+npix_pupil = 512 # [pixels] pupil sampling; should be greater or equal to 2x npix_focal to ensure Nyquist
+npix_focal = 128 # [pixels] focal plane sampling; should be no greater than 1/2 of npix_pupil to ensure Nyquist
+
+f_number = 15.0 # [unitless] telescope f-number
+f_eff = 42047.0 # [mm] telescope effective focal length
+field_bias = 0.2 # [degrees] raytrace surface 1 tilt about X
+jitter_rms = 10e-3 # [arcsec] RMS pointing error/jitter
+
+[optics]
+
+# primary mirror
+[optics.m1]
+diam = 3065.0 # [mm] optic diameter 
+beam_size = 3065.0 # [mm] beam diameter
+surface_rms = 10.0 # [nm] RMS surface error
+psd_b = 0.1 # [cycles/m] PSD cutoff frequency
+psd_c = 2.8 # [unitless] PSD slope
+coating = "NIST_1st_surface_Al.csv" # NIST reference curve for aged bare aluminum reflectivity
+
+# secondary mirror
+[optics.m2]
+diam = 220.0 # [mm] optic diameter 
+beam_size = 168.5 # [mm] beam diameter
+surface_rms = 5.0 # [nm] RMS surface error
+psd_b = 10.0 # [cycles/m] PSD cutoff frequency
+psd_c = 2.65 # [unitless] PSD slope
+coating = "NIST_1st_surface_Al.csv" # NIST reference curve for aged bare aluminum reflectivity
+
+# tertiary mirror
+[optics.m3]
+width = 380.0 # [mm] optic width
+height = 220.0 # [mm] optic height 
+beam_size = 96.4 # [mm] beam diameter
+surface_rms = 5.0 # [nm] RMS surface error
+psd_b = 10.0 # [cycles/m] PSD cutoff frequency
+psd_c = 2.65 # [unitless] PSD slope
+coating = "NIST_1st_surface_Al.csv" # NIST reference curve for aged bare aluminum reflectivity
+
+# fold flat
+[optics.m4]
+diam = 80.0 # [mm] optic diameter 
+beam_size = 72.6 # [mm] beam diameter
+surface_rms = 5.0 # [nm] RMS surface error
+psd_b = 10.0 # [cycles/m] PSD cutoff frequency
+psd_c = 2.65 # [unitless] PSD slope
+coating = "NIST_1st_surface_Al.csv" # NIST reference curve for aged bare aluminum reflectivity
+
+[detector]
+
+t_exp = 60 # [s] exposure time
+gain = 120 # [unitless] camera gain setting
+dx_focal = 3.76 # [um] pixel size
+qe = "ZWO_ASI6200MM_Pro_QE_curve.csv" # ZWO ASI6200MM Pro QE curve
+dark_current = "ZWO_ASI6200MM_Pro_Dark_Current_vs_Sensor_Temperature.csv" # ZWO ASI6200MM Pro dark current curve
+gain_curve = "ZWO_ASI6200MM_Pro_Gain_vs_Gain_Setting.csv" # ZWO ASI6200MM Pro QE gain curve
+read_noise = "ZWO_ASI6200MM_Pro_Read_Noise_vs_Gain_Setting.csv" # ZWO ASI6200MM Pro QE read noise curve
+well_depth = "ZWO_ASI6200MM_Pro_Well_Depth_vs_Gain_Setting.csv" # ZWO ASI6200MM Pro QE well depth curve
+temp = 20.0 # [celsius] # nominal camera temperature
+
+[sources]
+
+[sources.star1]
+magnitude = 18 # R-band Rmag
+position_x = 8.0 # arcmin
+position_y = 2.5 # arcmin
+
+[sources.star2]
+magnitude = 18 # R-band Rmag
+position_x = 0.0 # arcmin
+position_y = 2.5 # arcmin
+
+[sources.star3]
+magnitude = 18 # R-band Rmag
+position_x = 8.0 # arcmin
+position_y = 2.5 # arcmin
+
+[sources.star4]
+magnitude = 18 # R-band Rmag
+position_x = -12.0 # arcmin
+position_y = -6.5 # arcmin
+
+[sources.star5]
+magnitude = 18 # R-band Rmag
+position_x = -4.0 # arcmin
+position_y = -6.5 # arcmin
+
+[sources.star6]
+magnitude = 18 # R-band Rmag
+position_x = 4.0 # arcmin
+position_y = -6.5 # arcmin
+
+[sources.star7]
+magnitude = 18 # R-band Rmag
+position_x = 12.0 # arcmin
+position_y = -6.5 # arcmin
