@@ -66,36 +66,36 @@ temp = 20.0 # [celsius] # nominal camera temperature
 [sources]
 
 [sources.star1]
-magnitude = 18 # R-band Rmag
+magnitude = 17 # R-band Rmag
 position_x = 8.0 # arcmin
 position_y = 2.5 # arcmin
 
 [sources.star2]
-magnitude = 18 # R-band Rmag
+magnitude = 17 # R-band Rmag
 position_x = 0.0 # arcmin
 position_y = 2.5 # arcmin
 
 [sources.star3]
-magnitude = 18 # R-band Rmag
+magnitude = 17 # R-band Rmag
 position_x = 8.0 # arcmin
 position_y = 2.5 # arcmin
 
 [sources.star4]
-magnitude = 18 # R-band Rmag
+magnitude = 17 # R-band Rmag
 position_x = -12.0 # arcmin
 position_y = -6.5 # arcmin
 
 [sources.star5]
-magnitude = 18 # R-band Rmag
+magnitude = 17 # R-band Rmag
 position_x = -4.0 # arcmin
 position_y = -6.5 # arcmin
 
 [sources.star6]
-magnitude = 18 # R-band Rmag
+magnitude = 17 # R-band Rmag
 position_x = 4.0 # arcmin
 position_y = -6.5 # arcmin
 
 [sources.star7]
-magnitude = 18 # R-band Rmag
+magnitude = 17 # R-band Rmag
 position_x = 12.0 # arcmin
 position_y = -6.5 # arcmin
