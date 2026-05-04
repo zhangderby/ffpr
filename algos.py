@@ -76,7 +76,7 @@ class gain_invariant_error():
     
 class FFPR2():
 
-    def __init__(self, wvls, amp, max_zernike, fields, divs, efl, psfs, pupil_dx, focal_dx, error, jitter_kernel=None):
+    def __init__(self, wvls, amp, max_zernike, fields, divs, efl, psfs, pupil_dx, focal_dx, error, masks, jitter_kernel=None):
         
         # psf fields
         self.fields = fields
@@ -101,7 +101,7 @@ class FFPR2():
 
         # initialize individual PDPR classes for each field
         self.PDPR_list = [PDPR(wvls=wvls, amp=amp, modes=zernikes, coeffs=np.zeros(len(zernikes)), map=np.zeros((amp.shape[0], amp.shape[1])),
-                               divs=divs[f], efl=efl, psfs=psfs[f], pupil_dx=pupil_dx, focal_dx=focal_dx, error=error, 
+                               divs=divs[f], efl=efl, psfs=psfs[f], pupil_dx=pupil_dx, focal_dx=focal_dx, error=error, masks=masks[f],
                                jitter_kernel=jitter_kernel) for f in range(len(fields))]
         
     def fg(self, x, opt_param=None, opt_weights=None):
@@ -204,7 +204,7 @@ class FFPR2():
 
 class PDPR():
 
-    def __init__(self, wvls, amp, modes, coeffs, map, divs, efl, psfs, pupil_dx, focal_dx, error, jitter_kernel=None):
+    def __init__(self, wvls, amp, modes, coeffs, map, divs, efl, psfs, pupil_dx, focal_dx, error, masks, jitter_kernel=None):
 
         # defining OPD using modal basis for low freqs + point map for high freqs
         self.modes = np.array(modes)
@@ -217,10 +217,10 @@ class PDPR():
         # initialize models
         if type(psfs) == list:
             self.models = [model(wvls=wvls, amp=amp, opd=self.opd, div=div, efl=efl, psf=psf, pupil_dx=pupil_dx, focal_dx=focal_dx, error=error, 
-                                 jitter_kernel=jitter_kernel) for div, psf in zip(divs, psfs)]
+                                 mask=mask, jitter_kernel=jitter_kernel) for div, psf, mask in zip(divs, psfs, masks)]
         else:
             self.models = [model(wvls=wvls, amp=amp, opd=self.opd, div=divs, efl=efl, psf=psfs, pupil_dx=pupil_dx, 
-                                 focal_dx=focal_dx, error=error, jitter_kernel=jitter_kernel)]
+                                 focal_dx=focal_dx, error=error, mask=masks, jitter_kernel=jitter_kernel)]
         
         
     def fg(self, x, opt_param=None, opt_weights=None):
@@ -290,7 +290,7 @@ class PDPR():
 
 class model:
 
-    def __init__(self, wvls, amp, opd, div, efl, psf, pupil_dx, focal_dx, error, jitter_kernel=None):
+    def __init__(self, wvls, amp, opd, div, efl, psf, pupil_dx, focal_dx, error, mask, jitter_kernel=None):
 
         # model parameters
         self.wvls = wvls
@@ -302,6 +302,7 @@ class model:
         self.pupil_dx = pupil_dx
         self.focal_dx = focal_dx
         self.error = error
+        self.mask = mask
         self.jitter_kernel = jitter_kernel
 
         # initialize model
@@ -342,7 +343,7 @@ class model:
 
         # calculate error between the model PSF and the measured PSF
         # then calculate the gradient of the rror
-        self.E, I_bar = bias_and_gain_invariant_error(self.I, self.psf, mask=None)
+        self.E, I_bar = bias_and_gain_invariant_error(self.I, self.psf, mask=self.mask)
 
         # jitter gradient if given
         if self.jitter_kernel is not None:
