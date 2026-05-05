@@ -69,7 +69,7 @@ class telescope:
         # telescope pupil
         x, y = make_xy_grid(shape=self.cfg['general']['npix_pupil'], diameter=self.cfg['optics']['m1']['diam'])
         r, t = cart_to_polar(x, y)
-        self.pupil = circle(radius=self.cfg['optics']['m1']['diam'] / 2, r=r)
+        self.pupil = circle(radius=self.cfg['optics']['m1']['diam'] * 0.98 / 2, r=r)
 
         # calculate throughput
         self._calc_throughput()
