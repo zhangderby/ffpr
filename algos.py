@@ -41,6 +41,8 @@ from prysm.x.optym.cost import bias_and_gain_invariant_error
 
 from scipy.optimize import minimize
 
+from functools import partial
+
 import copy
 
 
@@ -74,6 +76,110 @@ class gain_invariant_error():
         t3 = np.sum(I ** 2)
         return 2 * t1 / (t2 * t3 ** 2) * (I * t1 - D * t3)
     
+def BING_BONG(opt, modal_cleanup=True, zonal_cleanup=False, 
+              max_kicks=5, iter_per_bing_bong=20, iter_per_psf=20, 
+              max_ls=20, thresh_conv=1e-1, frac_conv=5e-2):
+
+    # WYSI blessed shige seed WYSI
+    # do not change or 727 years of failure will befall your bloodline
+    rng = np.random.default_rng(seed=727)
+
+    # bing bong things
+    count = 1
+    bing = 1.
+    bong = 1.
+    kicks = 0
+    best_f = 1.
+    best_coeffs = 0
+    best_field_terms = 0
+
+    # BING BONG
+    print('INITIALIZE BING BONG')
+
+    while True: 
+        print('---------------')
+
+        fg = partial(opt.fg, opt_param='common', opt_weights=None)
+        x0 = copy.deepcopy(opt.coeffs.get())
+        minimize(fg, x0=x0, jac=True, method='L-BFGS-B',
+                options={'maxls' : max_ls, 'ftol' : 1e-20, 'gtol' : 1e-10, 'disp' : 0, 
+                         'maxiter' : iter_per_bing_bong})
+
+        bing = float(opt.costs[-1])
+        print(f'BING {count:02.0f} | f = {bing:.2e}')
+
+        if (np.abs(bong - bing) <= (frac_conv * bong)) and bing < thresh_conv:
+            print(f'CONVERGED: BING WITHIN {frac_conv * 100:2.0f}% OF BONG, f BELOW {thresh_conv:.2e}')
+            print('TERMINATING BING BONG')
+            break
+        
+        fg = partial(opt.fg, opt_param='all', opt_weights=None)
+        x0 = np.concatenate((copy.deepcopy(opt.field_terms), copy.deepcopy(opt.coeffs)), axis=0).get()
+        minimize(fg, x0=x0, jac=True, method='L-BFGS-B', 
+                options={'maxls' : max_ls, 'ftol' : 1e-20, 'gtol' : 1e-10, 'disp' : 0, 'maxiter' : iter_per_bing_bong})
+
+        bong = float(opt.costs[-1])
+        print(f'BONG {count:02.0f} | f = {bong:.2e}')
+
+        if bong < thresh_conv:
+            if (np.abs(bing - bong) <= (frac_conv * bing)):
+                print(f'CONVERGED: BONG WITHIN {frac_conv * 100:2.0f}% OF BING, f BELOW {thresh_conv:.2e}')
+                print('TERMINATE BING BONG')
+                break
+
+        if bong > thresh_conv:
+            if (np.abs(bing - bong) <= (frac_conv * bing)):
+                if kicks == max_kicks:
+                    print('NO MORE KICKING, WE MIGHT BE COOKED CHAT')
+                    print('TERMINATE BING BONG')
+                    if bong > best_f:
+                        opt.coeffs = best_coeffs
+                        opt.field_terms = best_field_terms
+                    break
+                else:
+                    print('STUCK ABOVE CONVERGENCE THRESHOLD, KICKING')
+                    best_coeffs = copy.deepcopy(opt.coeffs)
+                    best_field_terms = copy.deepcopy(opt.field_terms)
+                    best_f = copy.deepcopy(bong)
+                    if kicks == 0:
+                        opt.coeffs[2::2] *= -0.5
+                        opt.coeffs[3::2] *= 0.5
+                        opt.field_terms = np.zeros(len(opt.field_terms))
+                    else:
+                        opt.coeffs *= rng.uniform(low=-1, high=1, size=len(opt.coeffs))
+                        opt.field_terms = np.zeros(len(opt.field_terms))
+                    kicks += 1
+
+        count += 1
+
+    if modal_cleanup:
+        print('---------------')
+        print('INDIVIDUAL PSF OPTIMIZATION: MODAL')
+
+        for pdpr in opt.PDPR_list:
+            fg = partial(pdpr.fg, opt_param='coeffs', opt_weights=None)
+            x0 = pdpr.coeffs.get()
+
+            minimize(fg, x0=x0, jac=True, method='L-BFGS-B', 
+                    options={'maxls' : max_ls, 'ftol' : 1e-20, 'gtol' : 1e-10, 'disp' : 0, 
+                            'maxiter' : iter_per_psf})
+
+    if zonal_cleanup:
+        print('---------------')
+        print('INDIVIDUAL PSF OPTIMIZATION: ZONAL')
+        for pdpr in opt.PDPR_list:
+            fg = partial(pdpr.fg, opt_param='map', opt_weights=None)
+            x0 = pdpr.map.ravel().get()
+
+            minimize(fg, x0=x0, jac=True, method='L-BFGS-B', 
+                    options={'maxls' : max_ls, 'ftol' : 1e-20, 'gtol' : 1e-10, 'disp' : 0, 
+                            'maxiter' : iter_per_psf})
+
+    print('---------------')
+    print('DONE')
+    print()
+    
+
 class FFPR2():
 
     def __init__(self, wvls, amp, max_zernike, fields, divs, efl, psfs, pupil_dx, focal_dx, error, masks, jitter_kernel=None):
