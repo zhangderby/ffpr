@@ -67,7 +67,7 @@ temp = 20.0 # [celsius] # nominal camera temperature
 
 [sources.star1]
 magnitude = 17 # R-band Rmag
-position_x = 8.0 # arcmin
+position_x = -8.0 # arcmin
 position_y = 2.5 # arcmin
 
 [sources.star2]
