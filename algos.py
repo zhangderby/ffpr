@@ -178,7 +178,7 @@ def BING_BONG(opt, modal_cleanup=True, zonal_cleanup=False,
     print('---------------')
     print('DONE')
     print()
-    
+
 
 class FFPR2():
 
@@ -188,8 +188,8 @@ class FFPR2():
         self.fields = fields
 
         # for defining field-linear terms due to misalignments
-        self.field_terms = np.zeros(4)
-        # self.field_terms = np.zeros(10)
+        # self.field_terms = np.zeros(4)
+        self.field_terms = np.zeros(6)
 
         # create zernike basis 
         x, y = make_xy_grid(shape=amp.shape, diameter=2)
@@ -219,8 +219,8 @@ class FFPR2():
         self.g = 0
 
         # reset gradients
-        self.field_terms_bar = np.zeros(4)
-        # self.field_terms_bar = np.zeros(10)
+        # self.field_terms_bar = np.zeros(4)
+        self.field_terms_bar = np.zeros(6)
         self.coeffs_bar = 0
         self.maps_bar = 0
 
@@ -231,10 +231,10 @@ class FFPR2():
         # set the optimization parameter x
         # for now, this should be 'all', 'field', or 'common'
         if opt_param == 'all':
-            self.field_terms = x[:4]
-            self.coeffs = x[4:]
-            # self.field_terms = x[:10]
-            # self.coeffs = x[10:]
+            # self.field_terms = x[:4]
+            # self.coeffs = x[4:]
+            self.field_terms = x[:6]
+            self.coeffs = x[6:]
         if opt_param == 'field':
             self.field_terms = x
         if opt_param == 'common':
@@ -253,11 +253,7 @@ class FFPR2():
             coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1]
             coeffs[4] += -self.field_terms[3] * field[0] + self.field_terms[2] * field[1]
 
-            # coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1]
-            # coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1]
-            # coeffs[4] += self.field_terms[4] * field[0] + self.field_terms[5] * field[1]
-            # coeffs[5] += self.field_terms[6] * field[0] + self.field_terms[7] * field[1]
-            # coeffs[6] += self.field_terms[8] * field[0] + self.field_terms[9] * field[1]
+            coeffs[9] += self.field_terms[4] * field[0] + self.field_terms[5] * field[1]
 
             PDPR.fg(x=coeffs, opt_param='coeffs', opt_weights=None)
 
@@ -278,16 +274,9 @@ class FFPR2():
             self.field_terms_bar[2] += (coeffs_bar[3] * field[0]) + (coeffs_bar[4] * field[1])
             self.field_terms_bar[3] += (coeffs_bar[3] * field[1]) + (-coeffs_bar[4] * field[0])
 
-            # self.field_terms_bar[0] += coeffs_bar[2] * field[0]
-            # self.field_terms_bar[1] += coeffs_bar[2] * field[1]
-            # self.field_terms_bar[2] += coeffs_bar[3] * field[0]
-            # self.field_terms_bar[3] += coeffs_bar[3] * field[1]
-            # self.field_terms_bar[4] += coeffs_bar[4] * field[0]
-            # self.field_terms_bar[5] += coeffs_bar[4] * field[1]
-            # self.field_terms_bar[6] += coeffs_bar[5] * field[0]
-            # self.field_terms_bar[7] += coeffs_bar[5] * field[1]
-            # self.field_terms_bar[8] += coeffs_bar[6] * field[0]
-            # self.field_terms_bar[9] += coeffs_bar[6] * field[1]
+            self.field_terms_bar[4] += coeffs_bar[9] * field[0]
+            self.field_terms_bar[5] += coeffs_bar[9] * field[1]
+
 
         # grab the correct gradients
         if opt_param == 'all':

@@ -39,6 +39,47 @@ def load_pickle(fpath):
     infile.close()
     return pkl_data  
 
+def plot_fluxes_7(psfs, fields):
+
+    fig = plt.figure(figsize=(9, 4), dpi=150)
+    spec = GridSpec(ncols=9, nrows=2, width_ratios=[1, 1, 1, 1, 1, 1, 1, 1, 0.2])
+
+    ax0 = fig.add_subplot(spec[:, 8:])
+    ax0.set_axis_off()
+
+    ax1 = fig.add_subplot(spec[0, 1:3])
+    ax2 = fig.add_subplot(spec[0, 3:5])
+    ax3 = fig.add_subplot(spec[0, 5:7])
+    ax4 = fig.add_subplot(spec[1, 0:2])
+    ax5 = fig.add_subplot(spec[1, 2:4])
+    ax6 = fig.add_subplot(spec[1, 4:6])
+    ax7 = fig.add_subplot(spec[1, 6:8])
+
+    axs = [ax1, ax2, ax3, ax4, ax5, ax6, ax7]
+
+    v = np.max(np.array(psfs))
+
+    for i, ax in enumerate(axs):
+            
+        im = ax.imshow(psfs[i].get(), cmap=better_magma, norm='log', vmax=v, vmin=1e-4)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        ax.set_xlabel(f'{fields[i][0]:.01f}\'', fontsize=14)
+
+        if i == 0 or i == 3:
+            ax.set_ylabel(f'{fields[i][1]:.01f}\'', fontsize=14)
+            
+        if i < 3:
+            ax.xaxis.set_label_position('top')
+    
+    cb = plt.colorbar(im, ax=ax0, fraction=1.5, pad=0.1, label='Flux (Photons/s)')
+    cb.set_label('Flux (Photons/s)', fontsize=14)
+    cb.ax.tick_params(labelsize=14)
+    fig.set_tight_layout = True
+
+    return
+
 def plot_psfs_7(psfs, fields):
 
     fig = plt.figure(figsize=(9, 4), dpi=150)

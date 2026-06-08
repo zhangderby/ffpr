@@ -5,3 +5,4 @@ data/*.txt
 data/new_fields/*
 archive/*
 sim_results/*
+figures/*

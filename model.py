@@ -264,12 +264,12 @@ class telescope:
 
             # get psf intensity by summing across fluxes while applying throughput/exposure time
             psf_flux = sum_of_2d_modes(np.array(detector_fluxes), self.throughput)
+            fluxes.append(psf_flux)
 
             # convolve jitter kernel
             jitter_fft = fft.fft2(fft.ifftshift(self.jitter_kernel))
             psf_fft = fft.fft2(fft.ifftshift(psf_flux))
             psf_flux_with_jitter = fft.fftshift(fft.ifft2(jitter_fft * psf_fft)).real
-            fluxes.append(psf_flux_with_jitter)
 
             electrons = psf_flux_with_jitter * self.cfg['detector']['t_exp']
             dark = self.dark_current * self.cfg['detector']['t_exp']
@@ -280,9 +280,9 @@ class telescope:
 
             scaling = 1 / self.e_per_adu
             adc_in = shot_noise + read_noise
-            adc_in[adc_in > self.well_depth] = self.well_depth
-            if adc_in.any() > self.well_depth > 0:
+            if np.sum(adc_in > self.well_depth) > 0:
                 print('WARNING: SATURATED PSF')
+            adc_in[adc_in > self.well_depth] = self.well_depth
             adc_out = adc_in * scaling
 
             adc_max = 2 ** 16 # 16 bit read out
