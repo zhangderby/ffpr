@@ -65,11 +65,8 @@ def plot_fluxes_7(psfs, fields):
         ax.set_xticks([])
         ax.set_yticks([])
 
-        ax.set_xlabel(f'{fields[i][0]:.01f}\'', fontsize=14)
+        ax.set_xlabel(f'{fields[i][0]:.01f}\', {fields[i][1]:.01f}\'', fontsize=14)
 
-        if i == 0 or i == 3:
-            ax.set_ylabel(f'{fields[i][1]:.01f}\'', fontsize=14)
-            
         if i < 3:
             ax.xaxis.set_label_position('top')
     
@@ -106,10 +103,7 @@ def plot_psfs_7(psfs, fields):
         ax.set_xticks([])
         ax.set_yticks([])
 
-        ax.set_xlabel(f'{fields[i][0]:.01f}\'', fontsize=14)
-
-        if i == 0 or i == 3:
-            ax.set_ylabel(f'{fields[i][1]:.01f}\'', fontsize=14)
+        ax.set_xlabel(f'{fields[i][0]:.01f}\', {fields[i][1]:.01f}\'', fontsize=14)
             
         if i < 3:
             ax.xaxis.set_label_position('top')
@@ -161,10 +155,7 @@ def plot_opds_7(opds, pupil, fields):
         ax.set_xticks([])
         ax.set_yticks([])
 
-        ax.set_xlabel(f'{fields[i][0]:.01f}\'', fontsize=14)
-
-        if i == 0 or i == 3:
-            ax.set_ylabel(f'{fields[i][1]:.01f}\'', fontsize=14)
+        ax.set_xlabel(f'{fields[i][0]:.01f}\', {fields[i][1]:.01f}\'', fontsize=14)
             
         if i < 3:
             ax.xaxis.set_label_position('top')
@@ -177,7 +168,7 @@ def plot_opds_7(opds, pupil, fields):
                     bbox=dict(facecolor='white', edgecolor='black', alpha=0, pad=0.1, boxstyle='round'))
     
     cb = plt.colorbar(im, ax=ax0, fraction=1.5, pad=0.1, label='OPD (nm)')
-    cb.set_label('OPD (nm)', fontsize=14)
+    cb.set_label('WFE (nm)', fontsize=14)
     cb.ax.tick_params(labelsize=14)
     fig.set_tight_layout = True
 

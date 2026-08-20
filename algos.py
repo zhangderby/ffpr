@@ -143,14 +143,15 @@ def BING_BONG(opt, modal_cleanup=True, zonal_cleanup=False,
                         best_field_terms = copy.deepcopy(opt.field_terms)
                         best_f = copy.deepcopy(bong)
                     if kicks == 0:
-                        opt.coeffs[2:10] *= 0.25
-                        opt.coeffs[2] *= -2
-                        opt.coeffs[9] *= -2
-                        opt.field_terms = np.zeros(len(opt.field_terms))
+                        opt.coeffs[:10] *= 0.5
+                        opt.coeffs[10:] *= 0
+                        opt.coeffs[2] *= -1
+                        opt.coeffs[9] *= -1
+                        opt.field_terms *= 0
                     else:
                         opt.coeffs[2:10] *= rng.uniform(low=-1, high=1, size=len(opt.coeffs[2:10]))
                         opt.coeffs[10:] *= 0
-                        opt.field_terms = np.zeros(len(opt.field_terms))
+                        opt.field_terms *= 0
                     kicks += 1
 
         count += 1
@@ -204,7 +205,7 @@ class FFPR2():
         # having everything normalized to unit peak-to-valley works best
         zernikes = [z - np.min(z[amp]) for z in zernikes]
         zernikes = [z / np.max(z[amp]) for z in zernikes]
-        zernikes = [z - 0.5 for z in zernikes]
+        # zernikes = [z - 0.5 for z in zernikes]
         self.coeffs = np.zeros(len(zernikes)) 
 
         self.costs = []
@@ -254,8 +255,10 @@ class FFPR2():
             coeffs = copy.deepcopy(self.coeffs)
 
             coeffs[2] += self.field_terms[0] * field[0] + self.field_terms[1] * field[1] 
+            # coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1]
+            # coeffs[4] += -self.field_terms[3] * field[0] + self.field_terms[2] * field[1]
             coeffs[3] += self.field_terms[2] * field[0] + self.field_terms[3] * field[1]
-            coeffs[4] += -self.field_terms[4] * field[0] + self.field_terms[5] * field[1]
+            coeffs[4] += self.field_terms[4] * field[0] + self.field_terms[5] * field[1]
 
             PDPR.fg(x=coeffs, opt_param='coeffs', opt_weights=None)
 
@@ -273,6 +276,8 @@ class FFPR2():
             # convert total coeff gradients to slope/constant gradients
             self.field_terms_bar[0] += coeffs_bar[2] * field[0]
             self.field_terms_bar[1] += coeffs_bar[2] * field[1]
+            # self.field_terms_bar[2] += coeffs_bar[3] * field[0] + coeffs_bar[4] * field[1]
+            # self.field_terms_bar[3] += coeffs_bar[3] * field[1] - coeffs_bar[4] * field[0]
             self.field_terms_bar[2] += coeffs_bar[3] * field[0]
             self.field_terms_bar[3] += coeffs_bar[3] * field[1]
             self.field_terms_bar[4] += coeffs_bar[4] * field[0]
